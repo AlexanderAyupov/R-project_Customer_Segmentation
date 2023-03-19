@@ -1,0 +1,431 @@
+---
+title: "Wolt Customer Segmentation Analysis"
+author: "Alexander Ayupov"
+date: "`r Sys.Date()`"
+output:  
+  html_document: default
+  html_notebook: default
+---
+
+
+# Wolt Customer Segmentation Analysis
+For analysis, the method of customer segmentation by clusters will be used.
+The reason for having this approach is that dataset contains customer database, and to make sense of data it's reasonable to breakdowm customers by set of similarities.
+Analysis will result in having a defined customers groups to target.
+
+## Load required packages
+```{r load packages, echo=TRUE, results='hide', warning=FALSE, message=FALSE}
+install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+install.packages("skimr", repos = "http://cran.us.r-project.org")
+install.packages("janitor", repos = "http://cran.us.r-project.org")
+install.packages("DT", repos = "http://cran.us.r-project.org")
+install.packages("rmarkdown", repos ="http://cran.us.r-project.org")
+install.packages("knitr", repos = "http://cran.us.r-project.org")
+install.packages("plyr", repos = "http://cran.us.r-project.org")
+library(DT)
+library(tidyverse)
+library(readr)
+library(skimr)
+library(janitor)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(knitr)
+library(rmarkdown)
+library(lubridate)
+library(rmarkdown)
+library(knitr)
+```
+
+## Import Data
+```{r, echo=TRUE, results='hide', warning=FALSE, message=FALSE}
+wolt_dataset <- read_csv("dataset_for_analyst_assignment_20201120.csv")
+```
+
+## Understanding dataset, preparations
+```{r Get to know dataset, echo=TRUE, results='hide', warning=FALSE, message=FALSE}
+glimpse(wolt_dataset)
+as_tibble(wolt_dataset) %>% 
+  print(n=50)
+
+colnames(wolt_dataset)
+summary(wolt_dataset)
+```
+
+```{r, echo=TRUE, results='hide', warning=FALSE, message=FALSE}
+any(is.na(wolt_dataset))      #Check if there are null values
+nrow(na.omit(wolt_dataset))
+nrow(wolt_dataset)            #Check total number of observations
+```
+
+```{r, echo=TRUE, results='hide', warning=FALSE, message=FALSE}
+sum(is.na(wolt_dataset$USER_ID))        #Check for null values in a "key" columns
+sum(is.na(wolt_dataset$PURCHASE_COUNT))
+length(unique(wolt_dataset$USER_ID)) == nrow(wolt_dataset) #Check for duplicates 
+```
+
+```{r, echo=TRUE, results='hide', warning=FALSE, message=FALSE}
+length(unique(wolt_dataset$REGISTRATION_COUNTRY)) #Check unique values
+```
+
+## Data Cleaning
+
+```{r, echo=TRUE, results='hide', warning=FALSE, message=FALSE}
+wolt_dataset_cleaned <- wolt_dataset %>% filter(PURCHASE_COUNT>0)   #handling nulls
+```
+
+```{r, echo=TRUE, results='hide', warning=FALSE, message=FALSE}
+wolt_dataset_cleaned <- wolt_dataset_cleaned %>%       
+  filter(REGISTRATION_COUNTRY=="FIN" |
+           REGISTRATION_COUNTRY=="DNK" |
+           REGISTRATION_COUNTRY=="GRC")
+```
+
+
+## Group Customers by Registration country
+
+```{r}
+viz_by_country <- wolt_dataset_cleaned %>%
+  group_by(REGISTRATION_COUNTRY) %>%                             
+  summarize(customers = n()) %>%
+  arrange(customers) %>%                                
+  mutate(REGISTRATION_COUNTRY = factor(REGISTRATION_COUNTRY, REGISTRATION_COUNTRY)) %>%     
+  ggplot(aes(x=REGISTRATION_COUNTRY, y=customers, fill=REGISTRATION_COUNTRY)) +                  
+  geom_bar(stat="identity") +                      
+  coord_flip() +
+  theme(legend.position="none") +
+  geom_text(aes(label = round(customers))) +
+  labs(title ="Number of Customers/Country", caption = "By Alexander Ayupov", x="Country", y="Customers")
+       
+```
+
+
+```{r }
+plot(viz_by_country)
+```
+
+## Breakdown countries by Total purchases
+
+```{r}
+viz_country_vs_income <- wolt_dataset_cleaned %>%
+  group_by(REGISTRATION_COUNTRY) %>% 
+  summarize(pcount = sum(TOTAL_PURCHASES_EUR)) %>% 
+  ggplot(aes(x = REGISTRATION_COUNTRY, y = pcount, fill = REGISTRATION_COUNTRY)) +
+  geom_col() + 
+  coord_flip() +
+  theme(legend.position="none") +
+  geom_text(aes(label = round(pcount))) +
+  scale_y_continuous(labels = scales::dollar) +
+  labs(title ="Total purchases by Country", caption = "By Alexander Ayupov", x="Country", y="Total Purchases")
+```
+
+```{r}
+plot(viz_country_vs_income)
+```
+
+## Customers preferred device by country
+
+```{r}
+viz_prefdevice_by_country <- wolt_dataset_cleaned %>% 
+  filter(!is.na(PREFERRED_DEVICE)) %>% 
+  ggplot(aes(PREFERRED_DEVICE, fill=PREFERRED_DEVICE)) +
+  geom_bar() +
+  facet_wrap(~REGISTRATION_COUNTRY) +
+  theme(legend.position="none") +
+  labs(title ="Preferred Device by Country", caption = "By Alexander Ayupov", x="Device", y="Customers")
+```
+
+```{r}
+plot(viz_prefdevice_by_country)
+```
+
+# Clustering Customers
+
+## User Recency data transformation
+```{r}
+user_recency <- wolt_dataset_cleaned %>% 
+  select(USER_ID, MEDIAN_DAYS_BETWEEN_PURCHASES) %>% 
+  rename(recency = MEDIAN_DAYS_BETWEEN_PURCHASES) %>% 
+  group_by(USER_ID)
+
+user_recency[is.na(user_recency)] <- 0   #replace na with 0
+
+user_recency_filter <- user_recency %>%     #filter outliers
+  filter(recency <= 100)
+
+print(summary(user_recency$recency)) 
+```
+
+## Plotting user recency, group customers by Inactivity period
+
+```{r}
+viz_recency <- ggplot(user_recency_filter, aes(recency)) +
+  geom_histogram(bins = 20, color=4, fill="gray") +
+  ylab('Number of Customers') +
+  theme_minimal() +
+  labs(title ="Day of Customers Inactivity", subtitle = "Order recency", caption = "By Alexander Ayupov", x="Days of Inactivity", y="Customers") +
+  annotate("text", x=50,y=4000,label="50% of Users have ~9 days of Inactivity\nAverage is one month without making a single purchase", color="blue")
+```
+
+```{r}
+plot(viz_recency)
+```
+
+## User Frequency data transformation
+
+```{r}
+user_frequency <- wolt_dataset_cleaned %>% 
+  select(USER_ID, PURCHASE_COUNT) %>% 
+  rename(Frequency = PURCHASE_COUNT) %>% 
+  group_by(USER_ID)
+
+user_frequency_filter <- user_frequency %>%     #filter outliers
+  filter(Frequency <= 30)
+
+print(summary(user_frequency_filter$Frequency))
+```
+
+## Plotting user frequency, group by transaction per customers
+
+```{r}
+viz_frequency <- ggplot(user_frequency_filter, aes(USER_ID, Frequency)) +
+  geom_boxplot(color=4) +
+  theme(axis.ticks.x = element_blank()) +
+  theme_minimal() +
+  labs(title ="Purchase Frequency", caption = "By Alexander Ayupov", x="Customers", y="Number of Purchases per Customer") +
+  annotate("text", size=3.3, x=16700,y=25,label="Average 6 transaction per Customer\n50% of customers have ~3 transactions", color="blue")
+```
+
+```{r warning=FALSE}
+plot(viz_frequency)
+```
+
+## User Monetary value data transformation
+### Users summary less 1000€ value
+```{r}
+user_monetary_value <- wolt_dataset_cleaned %>% 
+  select(USER_ID, TOTAL_PURCHASES_EUR) %>% 
+  rename(monetary_value = TOTAL_PURCHASES_EUR) %>% 
+  group_by(USER_ID)
+
+MV_filter_1000 <- user_monetary_value %>% 
+  filter(monetary_value <= 1000)
+
+print(summary(MV_filter_1000$monetary_value))
+```
+### Users summary over 1000€ value
+```{r}
+MV_filter_over1000 <- user_monetary_value %>% 
+  filter(monetary_value > 1000)
+
+print(summary(MV_filter_over1000$monetary_value))
+```
+
+## Plotting user Monetary value
+### Users monetary value less 1000€
+
+```{r}
+viz_monetary_1000 <- ggplot(MV_filter_1000, aes(monetary_value)) +
+  geom_histogram(bins=10, color=4,fill="grey") +
+  scale_x_continuous(labels = scales::dollar) +
+  scale_y_continuous(labels = scales::comma) +
+  labs(title ="Revenue of Users - Below €1K", caption = "By Alexander Ayupov", x="Revenue", y="Number of Customers") +
+  annotate("text", x=650,y=4000,label="50% of Users brings 70€ revenue\nAverage revenue per user is 150€", color="blue")
+```
+
+```{r}
+plot(viz_monetary_1000)
+```
+
+### Users monetary value over 1000€
+
+```{r}
+viz_monetary_ov1000 <- ggplot(MV_filter_over1000, aes(monetary_value)) +
+  geom_histogram(bins=10, color=4,fill="grey") +
+  scale_x_continuous(labels = scales::dollar) +
+  scale_y_continuous(labels = scales::comma) + 
+  labs(title ="Revenue of Users - Over €1K", caption = "By Alexander Ayupov", x="Revenue", y="Number of Customers") +
+  annotate("text", x=6000,y=100,label="50% of Users brings 1350€ revenue\nAverage revenue per user is 1600€", color="blue")
+```
+
+```{r}
+plot(viz_monetary_ov1000)
+```
+
+## Merging recency, frequence, monetary value subsets
+
+```{r}
+Users_RFM <- merge(user_recency, user_frequency) 
+Users_RFM <- merge(Users_RFM, user_monetary_value) 
+DT::datatable((Users_RFM),
+              rownames = FALSE,
+              options = list(
+                pageLength = 10))
+```
+
+## Clustering Customers segments
+
+```{r}
+set.seed(415)
+clusters <- kmeans(scale(Users_RFM[,2:4]), 3, nstart = 1)
+Users_RFM$Cluster <- as.factor(clusters$cluster)
+
+KMeans_Results <- Users_RFM %>%
+  group_by(Cluster) %>%
+  summarise('Number of Users' = n(),
+            'Recency Mean' = round(mean(recency)),
+            'Frequency Mean' = scales::comma(round(mean(Frequency))),
+            'Monetary Value Mean' = scales::dollar(round(mean(monetary_value))),
+            'Cluster Revenue' = scales::dollar(sum(monetary_value))
+  )
+
+table_clusters <- DT::datatable((KMeans_Results),
+              rownames = FALSE)
+
+DT::datatable((KMeans_Results),
+              rownames = FALSE)
+```
+
+
+## Plotting Customers Clusters
+
+```{r}
+Cluster_size_visz <- ggplot(KMeans_Results, aes(Cluster, `Number of Users`)) +
+  geom_text(aes(label = `Number of Users`), vjust = -0.3) +
+  geom_bar(aes(fill=Cluster), stat='identity') +
+  theme_classic() +
+  labs(title ="Number of Users per Cluster", caption = "By Alexander Ayupov", x="Clusters", y="Number of Customers")
+```
+
+```{r}
+plot(Cluster_size_visz)
+```
+
+# Breakdown Users data by Daytime/Weekdays
+
+## Data transformation- Parsing Purchase hours 
+
+```{r}
+wolt_dataset_cleaned <- wolt_dataset_cleaned %>%
+  mutate(MOST_COMMON_HOUR_OF_THE_DAY_TO_PURCHASE = parse_date_time(MOST_COMMON_HOUR_OF_THE_DAY_TO_PURCHASE, 'H:'))   #format as date
+```
+
+```{r}
+wolt_dataset_cleaned <- wolt_dataset_cleaned %>%
+  mutate(MOST_COMMON_HOUR_OF_THE_DAY_TO_PURCHASE = format(strptime(MOST_COMMON_HOUR_OF_THE_DAY_TO_PURCHASE, "%Y-%m-%d %H:%M:%S"),'%H:%M'))   #Leave H:M format
+```
+
+## Data transformation- Formatting Purchase weekdays
+
+```{r, echo=TRUE, results='hide', warning=FALSE, message=FALSE}
+unique(wolt_dataset_cleaned$MOST_COMMON_WEEKDAY_TO_PURCHASE)
+
+wolt_dataset_cleaned$MOST_COMMON_WEEKDAY <- factor(wolt_dataset_cleaned$MOST_COMMON_WEEKDAY_TO_PURCHASE, levels=1:7,
+                                                   labels=c("Monday", "Tuesday", "Wednesday",
+                                                            "Thursday", "Friday", "Saturday", "Sunday"))
+```
+
+## Plotting Most common hours purchase by country
+### FIN
+
+```{r}
+viz_hours_fin <- wolt_dataset_cleaned %>%
+  filter(REGISTRATION_COUNTRY=="FIN") %>%  
+  group_by(MOST_COMMON_HOUR_OF_THE_DAY_TO_PURCHASE) %>% 
+  summarize(pcount = sum(PURCHASE_COUNT)) %>% 
+  ggplot(aes(x=MOST_COMMON_HOUR_OF_THE_DAY_TO_PURCHASE, y = pcount, fill=pcount)) +
+  geom_col() +
+  theme(axis.text.x = element_text(angle = 45)) +
+  theme(legend.position="none") +
+  labs(title ="Number of orders by day time FIN", caption = "By Alexander Ayupov", x="Hours of Purchase", y="Purchase count")
+```
+
+```{r}
+plot(viz_hours_fin)
+```
+
+### DNK
+
+```{r}
+viz_hours_dnk <- wolt_dataset_cleaned %>%
+  filter(REGISTRATION_COUNTRY=="DNK") %>%  
+  group_by(MOST_COMMON_HOUR_OF_THE_DAY_TO_PURCHASE) %>% 
+  summarize(pcount = sum(PURCHASE_COUNT)) %>% 
+  ggplot(aes(x=MOST_COMMON_HOUR_OF_THE_DAY_TO_PURCHASE, y = pcount, fill=pcount)) +
+  geom_col() +
+  theme(axis.text.x = element_text(angle = 45)) +
+  theme(legend.position="none") +
+  labs(title ="Number of orders by day time DNK", caption = "By Alexander Ayupov", x="Hours of Purchase", y="Purchase count")
+```
+
+```{r}
+plot(viz_hours_dnk)
+```
+
+### GRC
+
+```{r}
+viz_hours_grc <- wolt_dataset_cleaned %>%
+  filter(REGISTRATION_COUNTRY=="GRC") %>%  
+  group_by(MOST_COMMON_HOUR_OF_THE_DAY_TO_PURCHASE) %>% 
+  summarize(pcount = sum(PURCHASE_COUNT)) %>% 
+  ggplot(aes(x=MOST_COMMON_HOUR_OF_THE_DAY_TO_PURCHASE, y = pcount, fill=pcount)) +
+  geom_col() +
+  theme(axis.text.x = element_text(angle = 45)) +
+  theme(legend.position="none") +
+  labs(title ="Number of orders by day time GRC", caption = "By Alexander Ayupov", x="Hours of Purchase", y="Purchase count")
+```
+
+```{r}
+plot(viz_hours_grc)
+```
+
+## Plotting Most common weekdays purchase by country
+### FIN
+
+```{r}
+viz_days_fin <- wolt_dataset_cleaned %>%
+  filter(REGISTRATION_COUNTRY=="FIN") %>% 
+  group_by(MOST_COMMON_WEEKDAY) %>% 
+  summarize(pcount = sum(PURCHASE_COUNT)) %>% 
+  ggplot(aes(x = MOST_COMMON_WEEKDAY, y = pcount, fill=pcount)) +
+  geom_col() +
+  labs(title ="Number of orders by Weekdays FIN", caption = "By Alexander Ayupov", x="Days of Purchase", y="Purchase count")
+```
+
+```{r}
+plot(viz_days_fin)
+```
+
+### DNK
+
+```{r}
+viz_days_dnk <- wolt_dataset_cleaned %>%
+  filter(REGISTRATION_COUNTRY=="DNK") %>% 
+  group_by(MOST_COMMON_WEEKDAY) %>% 
+  summarize(pcount = sum(PURCHASE_COUNT)) %>% 
+  ggplot(aes(x = MOST_COMMON_WEEKDAY, y = pcount, fill=pcount)) +
+  geom_col() +
+  labs(title ="Number of orders by Weekdays DNK", caption = "By Alexander Ayupov", x="Days of Purchase", y="Purchase count")
+```
+
+```{r}
+plot(viz_days_dnk)
+```
+
+### GRC
+
+```{r}
+viz_days_grc <- wolt_dataset_cleaned %>%
+  filter(REGISTRATION_COUNTRY=="GRC") %>% 
+  group_by(MOST_COMMON_WEEKDAY) %>% 
+  summarize(pcount = sum(PURCHASE_COUNT)) %>% 
+  ggplot(aes(x = MOST_COMMON_WEEKDAY, y = pcount, fill=pcount)) +
+  geom_col() +
+  labs(title ="Number of orders by Weekdays GRC", caption = "By Alexander Ayupov", x="Days of Purchase", y="Purchase count")
+
+```
+
+```{r}
+plot(viz_days_grc)
+```
